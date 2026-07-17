@@ -1,8 +1,10 @@
+import * as THREE from "three";
 import { HandLandmarker, FilesetResolver, DrawingUtils, NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { HandSignals, HandGesture } from "./handSignals";
+import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, PinchDetector } from "./handSignals";
 import { VideoController } from "./videoController";
 import { FlowerScene } from "./flower";
 import { PanelManager } from "./panels";
+import { PhysicsWorld } from "./physics";
 
 const holoStage = document.getElementById("holo-stage") as HTMLDivElement;
 const holoPrevBtn = document.getElementById("holo-prev") as HTMLButtonElement;
@@ -23,6 +25,20 @@ const panelManager = new PanelManager(
 window.addEventListener("resize", () => {
   panelManager.resize(holoStage.clientWidth, holoStage.clientHeight);
 });
+
+const physics = new PhysicsWorld();
+const pinchDetector = new PinchDetector();
+const THROW_FORCE = 5200;
+const grabHistory: { pos: THREE.Vector3; t: number }[] = [];
+
+function screenToWorldOnPlane(nx: number, ny: number, planeZ: number): THREE.Vector3 {
+  const cam = panelManager.camera;
+  const distance = cam.position.z - planeZ;
+  const vFov = THREE.MathUtils.degToRad(cam.fov);
+  const visibleHeight = 2 * Math.tan(vFov / 2) * distance;
+  const visibleWidth = visibleHeight * cam.aspect;
+  return new THREE.Vector3((nx - 0.5) * visibleWidth, (0.5 - ny) * visibleHeight, planeZ);
+}
 
 const resumeVideo = document.getElementById("resume-video") as HTMLVideoElement;
 const videoCtrl = new VideoController(resumeVideo);
@@ -50,6 +66,8 @@ async function initHandLandmarker() {
     runningMode: "VIDEO",
     numHands: 1,
   });
+  await physics.init();
+  panelManager.attachPhysics(physics);
   predictLoop();
 }
 
@@ -69,12 +87,36 @@ function predictLoop() {
 
       videoCtrl.scrub(lastHandX);
 
+      const now = performance.now();
+      const pinchStrength = computePinchStrength(lm);
+      const { justStarted, justEnded } = pinchDetector.update(pinchStrength);
+      const screenPos = computeHandScreenPos(lm);
+      const dragPoint = screenToWorldOnPlane(screenPos.x, screenPos.y, panelManager.camera.position.z - 500);
+
+      if (justStarted) {
+        panelManager.beginGrab();
+        grabHistory.length = 0;
+      }
+      if (pinchDetector.pinching) {
+        panelManager.updateGrabPosition(dragPoint);
+        grabHistory.push({ pos: dragPoint.clone(), t: now });
+        if (grabHistory.length > 6) grabHistory.shift();
+      }
+      if (justEnded && grabHistory.length >= 2) {
+        const first = grabHistory[0];
+        const last = grabHistory[grabHistory.length - 1];
+        const dt = Math.max((last.t - first.t) / 1000, 1 / 60);
+        const vel = last.pos.clone().sub(first.pos).divideScalar(dt).multiplyScalar(THROW_FORCE / 1000);
+        panelManager.releaseGrab({ x: vel.x, y: vel.y, z: vel.z });
+      }
+
       const openness = gesture === HandGesture.OPEN_PALM ? 1 : gesture === HandGesture.FIST ? 0 : 0.5;
       flowerScene.setOpenness(openness);
       flowerStageEl.textContent = `Stage: ${flowerScene.getStageLabel()}`;
     }
   }
 
+  if (physics.isReady()) physics.step();
   panelManager.tick();
   rafId = requestAnimationFrame(predictLoop);
 }
