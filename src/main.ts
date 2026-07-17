@@ -1,12 +1,13 @@
 import * as THREE from "three";
 import { HandLandmarker, FilesetResolver, DrawingUtils, NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, PinchDetector } from "./handSignals";
+import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, computeIndexTipScreenPos, PinchDetector } from "./handSignals";
 import { VideoController } from "./videoController";
 import { FlowerScene } from "./flower";
 import { PanelManager } from "./panels";
 import { PhysicsWorld } from "./physics";
 import { AstrolabeRings } from "./rings";
 import { EmberField } from "./embers";
+import { GlyphCaster } from "./glyphCaster";
 
 const holoStage = document.getElementById("holo-stage") as HTMLDivElement;
 const holoPrevBtn = document.getElementById("holo-prev") as HTMLButtonElement;
@@ -56,6 +57,45 @@ const flowerScene = new FlowerScene(flowerCanvas);
 
 const handSignals = new HandSignals();
 
+const glyphStatusEl = document.getElementById("glyph-status") as HTMLParagraphElement;
+const attuneBtn = document.getElementById("attune-btn") as HTMLButtonElement;
+const glyphCaster = new GlyphCaster();
+let wasCasting = false;
+
+attuneBtn.addEventListener("click", () => {
+  glyphCaster.beginAttunement();
+  glyphStatusEl.textContent = `Attunement — point up, hold, draw "${glyphCaster.currentAttuneTarget()}", release`;
+});
+
+if (glyphCaster.isAttuned()) glyphStatusEl.textContent = "Glyphs: attuned (loaded from last session)";
+
+function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
+  if (!result) return;
+  if (result.kind === "attuned") {
+    const next = glyphCaster.currentAttuneTarget();
+    glyphStatusEl.textContent = next
+      ? `Attuned "${result.name}" — now draw "${next}"`
+      : `Attuned "${result.name}" — sanctum bound, casting is live`;
+    return;
+  }
+  if (result.kind === "fizzle") {
+    glyphStatusEl.textContent = "Glyph unrecognized — fizzled";
+    const mat = embers.points.material as THREE.PointsMaterial;
+    const original = mat.opacity;
+    mat.opacity = 0.15;
+    setTimeout(() => { mat.opacity = original; }, 220);
+    return;
+  }
+  glyphStatusEl.textContent = `Cast: ${result.name} (${(result.score * 100).toFixed(0)}%)`;
+  if (result.name === "circle") {
+    const visible = !rings.group.visible;
+    rings.group.visible = visible;
+    embers.points.visible = visible;
+  } else if (result.name === "zigzag") {
+    panelManager.resetAll();
+  }
+}
+
 let handLandmarker: HandLandmarker;
 let lastHandX = 0.5;
 let rafId = 0;
@@ -82,6 +122,7 @@ function predictLoop() {
   const video = resumeVideo;
   if (video.readyState >= 2 && handLandmarker) {
     const result = handLandmarker.detectForVideo(video, performance.now());
+    const now = performance.now();
     if (result.landmarks && result.landmarks.length > 0) {
       const lm = result.landmarks[0].map((p: NormalizedLandmark) => [p.x, p.y, p.z]);
       const gesture = handSignals.classify(lm);
@@ -90,11 +131,19 @@ function predictLoop() {
       lastHandX = handSignals.getNormalizedPalmX(lm);
 
       applyDiscreteGesture(gesture);
-      applyHeldGesture(gesture, held);
+      applyHeldGesture(gesture, now);
+
+      const isCasting = gesture === HandGesture.POINT_UP && held;
+      if (isCasting && !wasCasting) glyphCaster.startCapture();
+      if (isCasting) {
+        const tip = computeIndexTipScreenPos(lm);
+        glyphCaster.addPoint(tip.x, tip.y);
+      }
+      if (!isCasting && wasCasting) handleCastResult(glyphCaster.endCapture());
+      wasCasting = isCasting;
 
       videoCtrl.scrub(lastHandX);
 
-      const now = performance.now();
       const pinchStrength = computePinchStrength(lm);
       const { justStarted, justEnded } = pinchDetector.update(pinchStrength);
       const screenPos = computeHandScreenPos(lm);
@@ -120,6 +169,8 @@ function predictLoop() {
       const openness = gesture === HandGesture.OPEN_PALM ? 1 : gesture === HandGesture.FIST ? 0 : 0.5;
       flowerScene.setOpenness(openness);
       flowerStageEl.textContent = `Stage: ${flowerScene.getStageLabel()}`;
+    } else {
+      if (wasCasting) { glyphCaster.endCapture(); wasCasting = false; }
     }
   }
 
@@ -162,13 +213,21 @@ function applyDiscreteGesture(gesture: HandGesture) {
   }
 }
 
-function applyHeldGesture(gesture: HandGesture, held: boolean) {
-  if (gesture === HandGesture.POINT_UP && held) {
-    panelManager.nudgeFocusedScale(0.008);
+let lastZoomFrameTime = 0;
+const ZOOM_RATE_PER_SEC = 0.5;
+
+function applyHeldGesture(gesture: HandGesture, now: number) {
+  if (gesture !== HandGesture.ROCK_ON) {
+    lastZoomFrameTime = 0;
+    return;
   }
-  if (gesture === HandGesture.ROCK_ON && held) {
-    panelManager.nudgeFocusedScale(-0.008);
+  if (lastZoomFrameTime === 0) {
+    lastZoomFrameTime = now;
+    return;
   }
+  const dt = Math.min((now - lastZoomFrameTime) / 1000, 0.1);
+  lastZoomFrameTime = now;
+  panelManager.nudgeFocusedScale(-ZOOM_RATE_PER_SEC * dt);
 }
 
 function buildDots() {
