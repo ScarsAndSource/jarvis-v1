@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { HandLandmarker, FilesetResolver, DrawingUtils, NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, computeIndexTipScreenPos, PinchDetector } from "./handSignals";
+import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, computeIndexTipScreenPos, computePalmCenter, PinchDetector } from "./handSignals";
 import { VideoController } from "./videoController";
 import { FlowerScene } from "./flower";
 import { PanelManager } from "./panels";
@@ -9,6 +9,7 @@ import { AstrolabeRings } from "./rings";
 import { EmberField } from "./embers";
 import { GlyphCaster } from "./glyphCaster";
 import { SoundEngine } from "./sound";
+import { FusionController } from "./fusion";
 
 const holoStage = document.getElementById("holo-stage") as HTMLDivElement;
 const holoPrevBtn = document.getElementById("holo-prev") as HTMLButtonElement;
@@ -73,6 +74,9 @@ if (glyphCaster.isAttuned()) glyphStatusEl.textContent = "Glyphs: attuned (loade
 const soundEngine = new SoundEngine();
 document.addEventListener("pointerdown", () => { void soundEngine.unlock(); }, { once: true });
 
+const fusionController = new FusionController();
+const SPIRAL_ZOOM_PER_TURN = 0.35;
+
 function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
   if (!result) return;
   if (result.kind === "attuned") {
@@ -94,12 +98,21 @@ function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
   }
   soundEngine.playMatch();
   glyphStatusEl.textContent = `Cast: ${result.name} (${(result.score * 100).toFixed(0)}%)`;
+
   if (result.name === "circle") {
     const visible = !rings.group.visible;
     rings.group.visible = visible;
     embers.points.visible = visible;
   } else if (result.name === "zigzag") {
     panelManager.resetAll();
+  } else if (result.name === "spiral-in" || result.name === "spiral-out") {
+    const direction = result.name === "spiral-in" ? 1 : -1;
+    const amount = Math.min(result.turns ?? 1, 4) * SPIRAL_ZOOM_PER_TURN * direction;
+    panelManager.nudgeFocusedScale(amount);
+  } else if (result.name === "figure-eight") {
+    const nowActive = !fusionController.isActive();
+    fusionController.setActive(nowActive);
+    glyphStatusEl.textContent = nowActive ? "Fusion mode: active — use both hands" : "Fusion mode: off";
   }
 }
 
@@ -118,7 +131,7 @@ async function initHandLandmarker() {
       delegate: "GPU",
     },
     runningMode: "VIDEO",
-    numHands: 1,
+    numHands: 2,
   });
   await physics.init();
   panelManager.attachPhysics(physics);
@@ -155,6 +168,12 @@ function predictLoop() {
       }
       wasCasting = isCasting;
 
+      const secondaryLm = result.landmarks?.[1]?.map((p: NormalizedLandmark) => [p.x, p.y, p.z]) ?? null;
+      const primaryPalm = computePalmCenter(lm);
+      const secondaryPalm = secondaryLm ? computePalmCenter(secondaryLm) : null;
+      const fusionDelta = fusionController.update(primaryPalm, secondaryPalm);
+      if (fusionDelta) panelManager.applyFusionTransform(fusionDelta.scaleDelta, fusionDelta.rotationDelta);
+
       videoCtrl.scrub(lastHandX);
 
       const pinchStrength = computePinchStrength(lm);
@@ -185,6 +204,7 @@ function predictLoop() {
       flowerStageEl.textContent = `Stage: ${flowerScene.getStageLabel()}`;
     } else {
       if (wasCasting) { soundEngine.stopCastingDrone(); glyphCaster.endCapture(); wasCasting = false; }
+      fusionController.update(null, null);
     }
   }
 
