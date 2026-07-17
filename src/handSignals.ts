@@ -140,6 +140,10 @@ export function computePinchStrength(landmarks: number[][]): number {
 const PINCH_ENGAGE = 0.35;
 const PINCH_RELEASE = 0.55;
 
+export function computeIndexTipScreenPos(landmarks: number[][]): { x: number; y: number } {
+  return { x: 1 - landmarks[8][0], y: landmarks[8][1] };
+}
+
 export class PinchDetector {
   pinching = false;
 
