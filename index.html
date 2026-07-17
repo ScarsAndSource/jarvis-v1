@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS v1 — Holo Panels</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="holo-workspace">
+    <button id="holo-prev" class="holo-nav holo-nav-prev" type="button" aria-label="Previous panel">&#8249;</button>
+    <div id="holo-stage" class="holo-stage"></div>
+    <button id="holo-next" class="holo-nav holo-nav-next" type="button" aria-label="Next panel">&#8250;</button>
+    <button id="holo-reset" class="holo-reset" type="button">Reset</button>
+    <div id="holo-dots" class="holo-dots"></div>
+
+    <div id="holo-panel-source" class="holo-panel-source">
+      <section class="holo-panel" data-panel-id="resume" id="panel-resume">
+        <div class="holo-panel-inner">
+          <h2>Resume Reel — gesture controlled</h2>
+          <div class="video-wrap">
+            <video id="resume-video" src="/resume.mp4" playsinline></video>
+          </div>
+          <div class="timeline-track">
+            <div id="timeline-fill" class="timeline-fill"></div>
+            <div id="timeline-playhead" class="timeline-playhead"></div>
+          </div>
+          <div class="video-controls">
+            <span id="video-state">State: scrub</span>
+            <button id="mute-btn" type="button">Unmute</button>
+          </div>
+          <p class="hint">Move hand left/right to scrub · Open palm = play · Fist = pause · Thumbs down = restart</p>
+        </div>
+      </section>
+
+      <section class="holo-panel" data-panel-id="flower" id="panel-flower">
+        <div class="holo-panel-inner">
+          <h2>Flower — grows with your open hand</h2>
+          <canvas id="flower-canvas"></canvas>
+          <p id="flower-stage">Stage: Seed</p>
+          <p class="hint">Open your palm to grow it · close your fist to let it wilt back to seed</p>
+        </div>
+      </section>
+
+      <section class="holo-panel" data-panel-id="controls" id="panel-controls">
+        <div class="holo-panel-inner">
+          <h2>Gesture Controls</h2>
+          <ul class="gesture-legend">
+            <li><strong>Open palm</strong> — play resume video</li>
+            <li><strong>Fist</strong> — pause resume video</li>
+            <li><strong>Thumbs down</strong> — restart resume video</li>
+            <li><strong>Thumbs up</strong> — next panel</li>
+            <li><strong>Peace sign</strong> — previous panel</li>
+            <li><strong>Point up finger, hold</strong> — zoom in</li>
+            <li><strong>🤟 hold</strong> — zoom out</li>
+            <li><strong>Reset button</strong> — snap everything back</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
