@@ -24,6 +24,12 @@ const enum Finger {
   WRIST = 0,
 }
 
+export function distance2D(a: number[], b: number[]): number {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 function dist(a: number[], b: number[]): number {
   const dx = a[0] - b[0];
   const dy = a[1] - b[1];
@@ -119,5 +125,29 @@ export class HandSignals {
   reset() {
     this.prevGesture = HandGesture.NONE;
     this.holdFrames = 0;
+  }
+}
+
+export function computeHandScreenPos(landmarks: number[][]): { x: number; y: number } {
+  return { x: 1 - landmarks[0][0], y: landmarks[0][1] };
+}
+
+export function computePinchStrength(landmarks: number[][]): number {
+  const handScale = distance2D(landmarks[0], landmarks[9]) || 1e-6;
+  return distance2D(landmarks[4], landmarks[8]) / handScale;
+}
+
+const PINCH_ENGAGE = 0.35;
+const PINCH_RELEASE = 0.55;
+
+export class PinchDetector {
+  pinching = false;
+
+  update(strength: number | null): { pinching: boolean; justStarted: boolean; justEnded: boolean } {
+    const was = this.pinching;
+    if (strength === null) this.pinching = false;
+    else if (!this.pinching && strength < PINCH_ENGAGE) this.pinching = true;
+    else if (this.pinching && strength > PINCH_RELEASE) this.pinching = false;
+    return { pinching: this.pinching, justStarted: !was && this.pinching, justEnded: was && !this.pinching };
   }
 }
