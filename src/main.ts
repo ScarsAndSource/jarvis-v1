@@ -10,6 +10,8 @@ import { EmberField } from "./embers";
 import { GlyphCaster } from "./glyphCaster";
 import { SoundEngine } from "./sound";
 import { FusionController } from "./fusion";
+import { initWebcam, WebcamError } from "./webcam";
+import { LandmarkSmoother } from "./landmarkSmoother";
 
 const holoStage = document.getElementById("holo-stage") as HTMLDivElement;
 const holoPrevBtn = document.getElementById("holo-prev") as HTMLButtonElement;
@@ -52,6 +54,10 @@ function screenToWorldOnPlane(nx: number, ny: number, planeZ: number): THREE.Vec
 
 const resumeVideo = document.getElementById("resume-video") as HTMLVideoElement;
 const videoCtrl = new VideoController(resumeVideo);
+
+const webcamVideo = document.getElementById("webcam-feed") as HTMLVideoElement;
+const cameraStatusEl = document.getElementById("camera-status") as HTMLParagraphElement;
+const landmarkSmoother = new LandmarkSmoother();
 
 const flowerCanvas = document.getElementById("flower-canvas") as HTMLCanvasElement;
 const flowerStageEl = document.getElementById("flower-stage") as HTMLParagraphElement;
@@ -121,6 +127,20 @@ let lastHandX = 0.5;
 let rafId = 0;
 
 async function initHandLandmarker() {
+  try {
+    await initWebcam(webcamVideo);
+    cameraStatusEl.textContent = "Camera: live";
+    cameraStatusEl.classList.remove("is-error");
+    cameraStatusEl.classList.add("is-ready");
+  } catch (err) {
+    const message = err instanceof WebcamError ? err.message : "Camera failed to start.";
+    cameraStatusEl.textContent = `Camera: ${message}`;
+    cameraStatusEl.classList.remove("is-ready");
+    cameraStatusEl.classList.add("is-error");
+    console.error("Webcam init failed:", err);
+    return;
+  }
+
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
   );
@@ -139,12 +159,13 @@ async function initHandLandmarker() {
 }
 
 function predictLoop() {
-  const video = resumeVideo;
+  const video = webcamVideo;
   if (video.readyState >= 2 && handLandmarker) {
     const result = handLandmarker.detectForVideo(video, performance.now());
     const now = performance.now();
     if (result.landmarks && result.landmarks.length > 0) {
-      const lm = result.landmarks[0].map((p: NormalizedLandmark) => [p.x, p.y, p.z]);
+      const rawLm = result.landmarks[0].map((p: NormalizedLandmark) => [p.x, p.y, p.z]);
+      const lm = landmarkSmoother.smooth(rawLm, now);
       const gesture = handSignals.classify(lm);
       const held = handSignals.isHeld(gesture);
 
@@ -205,6 +226,7 @@ function predictLoop() {
     } else {
       if (wasCasting) { soundEngine.stopCastingDrone(); glyphCaster.endCapture(); wasCasting = false; }
       fusionController.update(null, null);
+      landmarkSmoother.reset();
     }
   }
 
