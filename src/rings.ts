@@ -36,6 +36,7 @@ export class AstrolabeRings {
     }
     this.group.position.set(0, -20, 900);
     void this.setTickData();
+    this.startAutoRefresh();
   }
 
   private async setTickData() {
@@ -53,6 +54,10 @@ export class AstrolabeRings {
     this.meshes[0].mat.uniforms.uTicks.value = timestampBits(seconds, this.meshes[0].spec.tickCount);
     this.meshes[1].mat.uniforms.uTicks.value = timestampBits(commitCount || seconds, this.meshes[1].spec.tickCount);
     this.meshes[2].mat.uniforms.uTicks.value = timestampBits(seconds ^ commitCount, this.meshes[2].spec.tickCount);
+  }
+
+  startAutoRefresh(intervalMs = 60000) {
+    setInterval(() => void this.setTickData(), intervalMs);
   }
 
   setEngaged(engaged: boolean) {

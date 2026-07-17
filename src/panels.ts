@@ -88,6 +88,14 @@ export class PanelManager {
     p.object.scale.setScalar(p.scale);
   }
 
+  applyFusionTransform(scaleDelta: number, rotationDelta: number) {
+    const p = this.panels[this.focusIndex];
+    if (!p || p.mode !== "docked") return;
+    p.scale = clamp(p.scale + scaleDelta, MIN_SCALE, MAX_SCALE);
+    p.object.scale.setScalar(p.scale);
+    p.object.rotation.z += rotationDelta;
+  }
+
   resetAll() {
     for (const p of this.panels) {
       if (p.mode !== "docked") continue;

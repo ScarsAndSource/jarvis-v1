@@ -144,6 +144,10 @@ export function computeIndexTipScreenPos(landmarks: number[][]): { x: number; y:
   return { x: 1 - landmarks[8][0], y: landmarks[8][1] };
 }
 
+export function computePalmCenter(landmarks: number[][]): { x: number; y: number } {
+  return { x: 1 - (landmarks[0][0] + landmarks[9][0]) / 2, y: (landmarks[0][1] + landmarks[9][1]) / 2 };
+}
+
 export class PinchDetector {
   pinching = false;
 

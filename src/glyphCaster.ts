@@ -1,14 +1,29 @@
-import { DollarRecognizer, type Pt } from "./dollarRecognizer";
+import { DollarRecognizer, centroid, type Pt } from "./dollarRecognizer";
 
 const STORAGE_KEY = "jarvis-v1-glyph-templates";
-export const GLYPH_NAMES = ["circle", "zigzag"] as const;
+export const GLYPH_NAMES = ["circle", "zigzag", "spiral-in", "spiral-out", "figure-eight"] as const;
 export type GlyphName = (typeof GLYPH_NAMES)[number];
 const MATCH_THRESHOLD = 0.65;
 
 export type CastResult =
-  | { kind: "matched"; name: GlyphName; score: number }
+  | { kind: "matched"; name: GlyphName; score: number; turns?: number }
   | { kind: "fizzle" }
   | { kind: "attuned"; name: GlyphName };
+
+function computeTurns(raw: Pt[]): number {
+  const c = centroid(raw);
+  let total = 0;
+  let prevAngle = Math.atan2(raw[0].y - c.y, raw[0].x - c.x);
+  for (let i = 1; i < raw.length; i++) {
+    const angle = Math.atan2(raw[i].y - c.y, raw[i].x - c.x);
+    let delta = angle - prevAngle;
+    while (delta > Math.PI) delta -= 2 * Math.PI;
+    while (delta < -Math.PI) delta += 2 * Math.PI;
+    total += delta;
+    prevAngle = angle;
+  }
+  return Math.abs(total) / (2 * Math.PI);
+}
 
 export class GlyphCaster {
   private recognizer = new DollarRecognizer();
@@ -29,8 +44,10 @@ export class GlyphCaster {
     return GLYPH_NAMES.every((n) => this.recognizer.hasTemplate(n));
   }
 
-  beginAttunement() {
-    this.attuneQueue = [...GLYPH_NAMES];
+  beginAttunement(forceAll = false) {
+    this.attuneQueue = forceAll
+      ? [...GLYPH_NAMES]
+      : GLYPH_NAMES.filter((n) => !this.recognizer.hasTemplate(n));
   }
 
   currentAttuneTarget(): GlyphName | null {
@@ -60,6 +77,8 @@ export class GlyphCaster {
 
     const result = this.recognizer.recognize(this.trail);
     if (!result || result.score < MATCH_THRESHOLD) return { kind: "fizzle" };
-    return { kind: "matched", name: result.name as GlyphName, score: result.score };
+    const name = result.name as GlyphName;
+    const turns = name === "spiral-in" || name === "spiral-out" ? computeTurns(this.trail) : undefined;
+    return { kind: "matched", name, score: result.score, turns };
   }
 }

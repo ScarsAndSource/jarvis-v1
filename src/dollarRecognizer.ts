@@ -18,7 +18,7 @@ function pathLength(points: Pt[]): number {
   return d;
 }
 
-function centroid(points: Pt[]): Pt {
+export function centroid(points: Pt[]): Pt {
   let x = 0, y = 0;
   for (const p of points) { x += p.x; y += p.y; }
   return { x: x / points.length, y: y / points.length };
