@@ -8,6 +8,7 @@ import { PhysicsWorld } from "./physics";
 import { AstrolabeRings } from "./rings";
 import { EmberField } from "./embers";
 import { GlyphCaster } from "./glyphCaster";
+import { SoundEngine } from "./sound";
 
 const holoStage = document.getElementById("holo-stage") as HTMLDivElement;
 const holoPrevBtn = document.getElementById("holo-prev") as HTMLButtonElement;
@@ -69,9 +70,13 @@ attuneBtn.addEventListener("click", () => {
 
 if (glyphCaster.isAttuned()) glyphStatusEl.textContent = "Glyphs: attuned (loaded from last session)";
 
+const soundEngine = new SoundEngine();
+document.addEventListener("pointerdown", () => { void soundEngine.unlock(); }, { once: true });
+
 function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
   if (!result) return;
   if (result.kind === "attuned") {
+    soundEngine.playMatch();
     const next = glyphCaster.currentAttuneTarget();
     glyphStatusEl.textContent = next
       ? `Attuned "${result.name}" — now draw "${next}"`
@@ -79,6 +84,7 @@ function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
     return;
   }
   if (result.kind === "fizzle") {
+    soundEngine.playFizzle();
     glyphStatusEl.textContent = "Glyph unrecognized — fizzled";
     const mat = embers.points.material as THREE.PointsMaterial;
     const original = mat.opacity;
@@ -86,6 +92,7 @@ function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
     setTimeout(() => { mat.opacity = original; }, 220);
     return;
   }
+  soundEngine.playMatch();
   glyphStatusEl.textContent = `Cast: ${result.name} (${(result.score * 100).toFixed(0)}%)`;
   if (result.name === "circle") {
     const visible = !rings.group.visible;
@@ -134,12 +141,18 @@ function predictLoop() {
       applyHeldGesture(gesture, now);
 
       const isCasting = gesture === HandGesture.POINT_UP && held;
-      if (isCasting && !wasCasting) glyphCaster.startCapture();
+      if (isCasting && !wasCasting) {
+        glyphCaster.startCapture();
+        soundEngine.startCastingDrone();
+      }
       if (isCasting) {
         const tip = computeIndexTipScreenPos(lm);
         glyphCaster.addPoint(tip.x, tip.y);
       }
-      if (!isCasting && wasCasting) handleCastResult(glyphCaster.endCapture());
+      if (!isCasting && wasCasting) {
+        soundEngine.stopCastingDrone();
+        handleCastResult(glyphCaster.endCapture());
+      }
       wasCasting = isCasting;
 
       videoCtrl.scrub(lastHandX);
@@ -151,6 +164,7 @@ function predictLoop() {
 
       if (justStarted) {
         panelManager.beginGrab();
+        soundEngine.playLockOn();
         grabHistory.length = 0;
       }
       if (pinchDetector.pinching) {
@@ -170,7 +184,7 @@ function predictLoop() {
       flowerScene.setOpenness(openness);
       flowerStageEl.textContent = `Stage: ${flowerScene.getStageLabel()}`;
     } else {
-      if (wasCasting) { glyphCaster.endCapture(); wasCasting = false; }
+      if (wasCasting) { soundEngine.stopCastingDrone(); glyphCaster.endCapture(); wasCasting = false; }
     }
   }
 
