@@ -5,6 +5,8 @@ import { VideoController } from "./videoController";
 import { FlowerScene } from "./flower";
 import { PanelManager } from "./panels";
 import { PhysicsWorld } from "./physics";
+import { AstrolabeRings } from "./rings";
+import { EmberField } from "./embers";
 
 const holoStage = document.getElementById("holo-stage") as HTMLDivElement;
 const holoPrevBtn = document.getElementById("holo-prev") as HTMLButtonElement;
@@ -25,6 +27,11 @@ const panelManager = new PanelManager(
 window.addEventListener("resize", () => {
   panelManager.resize(holoStage.clientWidth, holoStage.clientHeight);
 });
+
+const rings = new AstrolabeRings();
+const embers = new EmberField();
+panelManager.scene.add(rings.group, embers.points);
+let lastFrameTime = performance.now();
 
 const physics = new PhysicsWorld();
 const pinchDetector = new PinchDetector();
@@ -116,6 +123,13 @@ function predictLoop() {
     }
   }
 
+  const frameNow = performance.now();
+  const dt = Math.min((frameNow - lastFrameTime) / 1000, 0.1);
+  lastFrameTime = frameNow;
+  rings.setEngaged(pinchDetector.pinching);
+  embers.setEngaged(pinchDetector.pinching);
+  rings.update(dt, frameNow / 1000);
+  embers.update(dt);
   if (physics.isReady()) physics.step();
   panelManager.tick();
   rafId = requestAnimationFrame(predictLoop);
