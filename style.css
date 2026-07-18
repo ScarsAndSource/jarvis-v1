@@ -283,14 +283,32 @@ canvas#flower-canvas {
   pointer-events: none;
 }
 
-.camera-preview video {
+.camera-preview-box {
+  position: relative;
   width: 160px;
   height: 120px;
-  object-fit: cover;
+}
+
+.camera-preview video,
+.camera-preview canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 160px;
+  height: 120px;
   border-radius: 8px;
-  border: 1px solid rgba(167, 139, 250, 0.4);
-  background: #000;
+  /* Mirror the feed so hand movement matches what the user sees, like a normal webcam view */
   transform: scaleX(-1);
+}
+
+.camera-preview video {
+  object-fit: cover;
+  background: #000;
+  border: 1px solid rgba(167, 139, 250, 0.4);
+}
+
+.camera-preview canvas {
+  object-fit: cover;
 }
 
 .camera-status {

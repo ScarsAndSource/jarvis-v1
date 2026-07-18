@@ -64,8 +64,12 @@
     <button id="attune-btn" type="button">Attune Glyphs</button>
 
     <div id="camera-preview" class="camera-preview">
-      <video id="webcam-feed" autoplay playsinline muted></video>
+      <div class="camera-preview-box">
+        <video id="webcam-feed" autoplay playsinline muted></video>
+        <canvas id="tracking-overlay"></canvas>
+      </div>
       <p id="camera-status" class="camera-status">Camera: requesting access…</p>
+      <p id="tracking-status" class="camera-status">Hand: waiting for camera</p>
     </div>
   </div>
 

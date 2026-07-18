@@ -57,7 +57,14 @@ const videoCtrl = new VideoController(resumeVideo);
 
 const webcamVideo = document.getElementById("webcam-feed") as HTMLVideoElement;
 const cameraStatusEl = document.getElementById("camera-status") as HTMLParagraphElement;
-const landmarkSmoother = new LandmarkSmoother();
+const overlayCanvas = document.getElementById("tracking-overlay") as HTMLCanvasElement;
+const overlayCtx = overlayCanvas.getContext("2d") as CanvasRenderingContext2D;
+const drawingUtils = new DrawingUtils(overlayCtx);
+const trackingStatusEl = document.getElementById("tracking-status") as HTMLParagraphElement;
+// beta pulls the filter toward being more responsive during fast motion (less
+// lag) while minCutoff still kills jitter when the hand is still. Raise beta
+// if it still feels laggy, lower it if it feels jittery.
+const landmarkSmoother = new LandmarkSmoother(1.2, 0.6, 1.0);
 
 const flowerCanvas = document.getElementById("flower-canvas") as HTMLCanvasElement;
 const flowerStageEl = document.getElementById("flower-stage") as HTMLParagraphElement;
@@ -155,17 +162,86 @@ async function initHandLandmarker() {
   });
   await physics.init();
   panelManager.attachPhysics(physics);
-  predictLoop();
+
+  overlayCanvas.width = webcamVideo.videoWidth || 640;
+  overlayCanvas.height = webcamVideo.videoHeight || 480;
+
+  requestAnimationFrame(renderTick);
+  scheduleDetect();
 }
 
-function predictLoop() {
+/**
+ * Runs every animation frame regardless of hand-detection cost, so the 3D
+ * scene stays smooth even if ML inference is slow on a given machine.
+ */
+function renderTick() {
+  const frameNow = performance.now();
+  const dt = Math.min((frameNow - lastFrameTime) / 1000, 0.1);
+  lastFrameTime = frameNow;
+  rings.setEngaged(pinchDetector.pinching);
+  embers.setEngaged(pinchDetector.pinching);
+  rings.update(dt, frameNow / 1000);
+  embers.update(dt);
+  if (physics.isReady()) physics.step();
+  panelManager.tick();
+  rafId = requestAnimationFrame(renderTick);
+}
+
+/**
+ * Schedules detectTick to run as new camera frames actually arrive, via
+ * requestVideoFrameCallback (syncs to real frame delivery, avoids redundant
+ * work on frames that haven't changed). Falls back to a ~30fps timer on
+ * browsers without rVFC support (older Safari).
+ */
+function scheduleDetect() {
+  const videoAny = webcamVideo as HTMLVideoElement & {
+    requestVideoFrameCallback?: (cb: () => void) => number;
+  };
+  if (typeof videoAny.requestVideoFrameCallback === "function") {
+    videoAny.requestVideoFrameCallback(() => {
+      detectTick();
+      scheduleDetect();
+    });
+  } else {
+    setTimeout(() => {
+      detectTick();
+      scheduleDetect();
+    }, 33);
+  }
+}
+
+function drawOverlay(allLandmarks: NormalizedLandmark[][]) {
+  overlayCtx.save();
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  for (const hand of allLandmarks) {
+    drawingUtils.drawConnectors(hand, HandLandmarker.HAND_CONNECTIONS, {
+      color: "#a78bfa",
+      lineWidth: 3,
+    });
+    drawingUtils.drawLandmarks(hand, {
+      color: "#7fe0a0",
+      lineWidth: 1,
+      radius: 4,
+    });
+  }
+  overlayCtx.restore();
+}
+
+function detectTick() {
   const video = webcamVideo;
-  if (video.readyState >= 2 && handLandmarker) {
-    const result = handLandmarker.detectForVideo(video, performance.now());
-    const now = performance.now();
-    if (result.landmarks && result.landmarks.length > 0) {
-      const rawLm = result.landmarks[0].map((p: NormalizedLandmark) => [p.x, p.y, p.z]);
-      const lm = landmarkSmoother.smooth(rawLm, now);
+  if (video.readyState < 2 || !handLandmarker) return;
+
+  const result = handLandmarker.detectForVideo(video, performance.now());
+  const now = performance.now();
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    drawOverlay(result.landmarks);
+    trackingStatusEl.textContent = `Hand: tracked (${result.landmarks.length})`;
+    trackingStatusEl.classList.remove("is-error");
+    trackingStatusEl.classList.add("is-ready");
+
+    const rawLm = result.landmarks[0].map((p: NormalizedLandmark) => [p.x, p.y, p.z]);
+    const lm = landmarkSmoother.smooth(rawLm, now);
       const gesture = handSignals.classify(lm);
       const held = handSignals.isHeld(gesture);
 
@@ -223,23 +299,15 @@ function predictLoop() {
       const openness = gesture === HandGesture.OPEN_PALM ? 1 : gesture === HandGesture.FIST ? 0 : 0.5;
       flowerScene.setOpenness(openness);
       flowerStageEl.textContent = `Stage: ${flowerScene.getStageLabel()}`;
-    } else {
-      if (wasCasting) { soundEngine.stopCastingDrone(); glyphCaster.endCapture(); wasCasting = false; }
-      fusionController.update(null, null);
-      landmarkSmoother.reset();
-    }
+  } else {
+    if (wasCasting) { soundEngine.stopCastingDrone(); glyphCaster.endCapture(); wasCasting = false; }
+    fusionController.update(null, null);
+    landmarkSmoother.reset();
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    trackingStatusEl.textContent = "Hand: not detected";
+    trackingStatusEl.classList.remove("is-ready");
+    trackingStatusEl.classList.add("is-error");
   }
-
-  const frameNow = performance.now();
-  const dt = Math.min((frameNow - lastFrameTime) / 1000, 0.1);
-  lastFrameTime = frameNow;
-  rings.setEngaged(pinchDetector.pinching);
-  embers.setEngaged(pinchDetector.pinching);
-  rings.update(dt, frameNow / 1000);
-  embers.update(dt);
-  if (physics.isReady()) physics.step();
-  panelManager.tick();
-  rafId = requestAnimationFrame(predictLoop);
 }
 
 let lastDiscreteGesture = HandGesture.NONE;
