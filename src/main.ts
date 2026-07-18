@@ -331,13 +331,25 @@ function detectTick() {
 
       lastHandX = handSignals.getNormalizedPalmX(lm);
 
-      applyDiscreteGesture(gesture);
-      applyHeldGesture(gesture, now);
+      // The Air Writing panel is meant to be a fully isolated surface: no
+      // other gesture system should be able to act while it's focused.
+      // Previously applyDiscreteGesture/applyHeldGesture ran unconditionally
+      // here, every frame, regardless of which panel was focused — so any
+      // hand shape that transiently looked like PEACE/THUMBS_UP while you
+      // were mid-stroke (fingers naturally spreading as you write) instantly
+      // changed focus away from the airwrite panel. Because your hand was
+      // still pinched at that moment, the very next frame reinterpreted the
+      // same ongoing pinch as a panel grab instead of a pen stroke, and
+      // releasing it moments later launched the panel — one bug producing
+      // both "screen changes while I'm writing" and "panels fall off".
+      if (onAirwritePanel) {
+        resetDiscreteGestureDebounce();
+      } else {
+        const confirmedGesture = debounceDiscreteGesture(gesture);
+        if (confirmedGesture !== null) applyDiscreteGesture(confirmedGesture);
+        applyHeldGesture(gesture, now);
+      }
 
-      // The Air Writing panel is dedicated: while it's focused, no other
-      // gesture system (glyph casting, panel grab/throw) gets to act, so it
-      // behaves like its own isolated surface instead of fighting for the
-      // same pinch/point motions.
       const isCasting = !onAirwritePanel && gesture === HandGesture.POINT_UP && held;
       if (isCasting && !wasCasting) {
         glyphCaster.startCapture();
@@ -456,6 +468,30 @@ function detectTick() {
 }
 
 let lastDiscreteGesture = HandGesture.NONE;
+
+// Requires a gesture to read the same for DISCRETE_CONFIRM_FRAMES straight
+// frames before it's treated as "confirmed" and handed to
+// applyDiscreteGesture. Without this, classify() only needs to misfire for
+// a single frame — entirely possible during fast hand motion — to instantly
+// trigger a focus change, play, pause, or restart.
+const DISCRETE_CONFIRM_FRAMES = 4;
+let pendingDiscreteGesture = HandGesture.NONE;
+let pendingDiscreteFrames = 0;
+
+function debounceDiscreteGesture(gesture: HandGesture): HandGesture | null {
+  if (gesture === pendingDiscreteGesture) {
+    pendingDiscreteFrames++;
+  } else {
+    pendingDiscreteGesture = gesture;
+    pendingDiscreteFrames = 1;
+  }
+  return pendingDiscreteFrames === DISCRETE_CONFIRM_FRAMES ? gesture : null;
+}
+
+function resetDiscreteGestureDebounce() {
+  pendingDiscreteGesture = HandGesture.NONE;
+  pendingDiscreteFrames = 0;
+}
 
 function applyDiscreteGesture(gesture: HandGesture) {
   if (gesture === lastDiscreteGesture) return;

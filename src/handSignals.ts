@@ -176,12 +176,43 @@ export function computeHandOpenness(landmarks: number[][]): number {
 
 export class PinchDetector {
   pinching = false;
+  // The engage/release hysteresis band above absorbs steady jitter, but a
+  // single noisy tracking frame (a landmark spike, a momentary detection
+  // hiccup) could still cross the band for exactly one frame and flip
+  // `pinching`, producing a phantom pen-down/pen-up in the middle of a
+  // stroke that the person never intended. Requiring the flip to repeat for
+  // CONFIRM_FRAMES in a row before committing filters that out while adding
+  // only ~1 frame of perceptible latency.
+  private static readonly CONFIRM_FRAMES = 2;
+  private pendingState = false;
+  private pendingFrames = 0;
 
   update(strength: number | null): { pinching: boolean; justStarted: boolean; justEnded: boolean } {
     const was = this.pinching;
-    if (strength === null) this.pinching = false;
-    else if (!this.pinching && strength < PINCH_ENGAGE) this.pinching = true;
-    else if (this.pinching && strength > PINCH_RELEASE) this.pinching = false;
+
+    if (strength === null) {
+      this.pinching = false;
+      this.pendingFrames = 0;
+      return { pinching: this.pinching, justStarted: false, justEnded: was && !this.pinching };
+    }
+
+    let desired = this.pinching;
+    if (!this.pinching && strength < PINCH_ENGAGE) desired = true;
+    else if (this.pinching && strength > PINCH_RELEASE) desired = false;
+
+    if (desired === this.pinching) {
+      this.pendingFrames = 0;
+    } else if (desired === this.pendingState) {
+      this.pendingFrames++;
+      if (this.pendingFrames >= PinchDetector.CONFIRM_FRAMES) {
+        this.pinching = desired;
+        this.pendingFrames = 0;
+      }
+    } else {
+      this.pendingState = desired;
+      this.pendingFrames = 1;
+    }
+
     return { pinching: this.pinching, justStarted: !was && this.pinching, justEnded: was && !this.pinching };
   }
 }
