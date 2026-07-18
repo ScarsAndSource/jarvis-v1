@@ -11,7 +11,9 @@
 <body>
   <div class="holo-workspace">
     <button id="holo-prev" class="holo-nav holo-nav-prev" type="button" aria-label="Previous panel">&#8249;</button>
-    <div id="holo-stage" class="holo-stage"></div>
+    <div id="holo-stage" class="holo-stage">
+      <canvas id="glyph-trail-canvas" class="glyph-trail-canvas"></canvas>
+    </div>
     <button id="holo-next" class="holo-nav holo-nav-next" type="button" aria-label="Next panel">&#8250;</button>
     <button id="holo-reset" class="holo-reset" type="button">Reset</button>
     <div id="holo-dots" class="holo-dots"></div>
@@ -60,8 +62,19 @@
         </div>
       </section>
     </div>
-    <p id="glyph-status">Glyphs: not attuned</p>
-    <button id="attune-btn" type="button">Attune Glyphs</button>
+    <div class="glyph-panel">
+      <p class="glyph-panel-title">Glyph Casting</p>
+      <p class="glyph-panel-hint">
+        Point your index finger straight up and hold it steady — a rune trail
+        will appear on the stage. Trace circle, zigzag, spiral, or figure-eight,
+        then relax your finger to cast it. Each glyph needs to be attuned
+        (drawn once to record it) before it will be recognized.
+      </p>
+      <div class="glyph-panel-row">
+        <p id="glyph-status">Glyphs: not attuned</p>
+        <button id="attune-btn" type="button">Attune Glyphs</button>
+      </div>
+    </div>
 
     <div id="camera-preview" class="camera-preview">
       <div class="camera-preview-box">

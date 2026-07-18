@@ -77,6 +77,42 @@ const attuneBtn = document.getElementById("attune-btn") as HTMLButtonElement;
 const glyphCaster = new GlyphCaster();
 let wasCasting = false;
 
+const glyphTrailCanvas = document.getElementById("glyph-trail-canvas") as HTMLCanvasElement;
+const glyphTrailCtx = glyphTrailCanvas.getContext("2d") as CanvasRenderingContext2D;
+let glyphTrailPoints: { x: number; y: number }[] = [];
+let glyphFadeTimer = 0;
+
+function resizeGlyphTrailCanvas() {
+  glyphTrailCanvas.width = holoStage.clientWidth;
+  glyphTrailCanvas.height = holoStage.clientHeight;
+}
+resizeGlyphTrailCanvas();
+window.addEventListener("resize", resizeGlyphTrailCanvas);
+
+function drawGlyphTrail() {
+  glyphTrailCtx.clearRect(0, 0, glyphTrailCanvas.width, glyphTrailCanvas.height);
+  if (glyphTrailPoints.length < 2) return;
+  glyphTrailCtx.save();
+  glyphTrailCtx.strokeStyle = "#c9b8ff";
+  glyphTrailCtx.lineWidth = 3;
+  glyphTrailCtx.lineCap = "round";
+  glyphTrailCtx.lineJoin = "round";
+  glyphTrailCtx.shadowColor = "#a78bfa";
+  glyphTrailCtx.shadowBlur = 12;
+  glyphTrailCtx.beginPath();
+  glyphTrailCtx.moveTo(glyphTrailPoints[0].x, glyphTrailPoints[0].y);
+  for (let i = 1; i < glyphTrailPoints.length; i++) {
+    glyphTrailCtx.lineTo(glyphTrailPoints[i].x, glyphTrailPoints[i].y);
+  }
+  glyphTrailCtx.stroke();
+  const last = glyphTrailPoints[glyphTrailPoints.length - 1];
+  glyphTrailCtx.fillStyle = "#e8935a";
+  glyphTrailCtx.beginPath();
+  glyphTrailCtx.arc(last.x, last.y, 6, 0, Math.PI * 2);
+  glyphTrailCtx.fill();
+  glyphTrailCtx.restore();
+}
+
 attuneBtn.addEventListener("click", () => {
   glyphCaster.beginAttunement();
   glyphStatusEl.textContent = `Attunement — point up, hold, draw "${glyphCaster.currentAttuneTarget()}", release`;
@@ -254,14 +290,25 @@ function detectTick() {
       if (isCasting && !wasCasting) {
         glyphCaster.startCapture();
         soundEngine.startCastingDrone();
+        clearTimeout(glyphFadeTimer);
+        glyphTrailPoints = [];
       }
       if (isCasting) {
         const tip = computeIndexTipScreenPos(lm);
         glyphCaster.addPoint(tip.x, tip.y);
+        glyphTrailPoints.push({ x: tip.x * glyphTrailCanvas.width, y: tip.y * glyphTrailCanvas.height });
+        drawGlyphTrail();
       }
       if (!isCasting && wasCasting) {
         soundEngine.stopCastingDrone();
         handleCastResult(glyphCaster.endCapture());
+        // Leave the finished rune on screen briefly so the person can see what
+        // they drew, then fade it — instead of it vanishing the instant the
+        // pose relaxes, which is what made casting feel like it wasn't working.
+        glyphFadeTimer = window.setTimeout(() => {
+          glyphTrailPoints = [];
+          glyphTrailCtx.clearRect(0, 0, glyphTrailCanvas.width, glyphTrailCanvas.height);
+        }, 500);
       }
       wasCasting = isCasting;
 
@@ -300,7 +347,14 @@ function detectTick() {
       flowerScene.setOpenness(openness);
       flowerStageEl.textContent = `Stage: ${flowerScene.getStageLabel()}`;
   } else {
-    if (wasCasting) { soundEngine.stopCastingDrone(); glyphCaster.endCapture(); wasCasting = false; }
+    if (wasCasting) {
+      soundEngine.stopCastingDrone();
+      glyphCaster.endCapture();
+      wasCasting = false;
+      clearTimeout(glyphFadeTimer);
+      glyphTrailPoints = [];
+      glyphTrailCtx.clearRect(0, 0, glyphTrailCanvas.width, glyphTrailCanvas.height);
+    }
     fusionController.update(null, null);
     landmarkSmoother.reset();
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
