@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { HandLandmarker, FilesetResolver, DrawingUtils, NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, computeIndexTipScreenPos, computePalmCenter, PinchDetector } from "./handSignals";
+import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, computeIndexTipScreenPos, computePalmCenter, computePinchMidpointScreenPos, PinchDetector } from "./handSignals";
 import { VideoController } from "./videoController";
 import { FlowerScene } from "./flower";
+import { AirWriter } from "./airWriter";
 import { PanelManager } from "./panels";
 import { PhysicsWorld } from "./physics";
 import { AstrolabeRings } from "./rings";
@@ -69,6 +70,17 @@ const landmarkSmoother = new LandmarkSmoother(1.2, 0.6, 1.0);
 const flowerCanvas = document.getElementById("flower-canvas") as HTMLCanvasElement;
 const flowerStageEl = document.getElementById("flower-stage") as HTMLParagraphElement;
 const flowerScene = new FlowerScene(flowerCanvas);
+
+const airwriteInkCanvas = document.getElementById("airwrite-ink-canvas") as HTMLCanvasElement;
+const airwriteCursorCanvas = document.getElementById("airwrite-cursor-canvas") as HTMLCanvasElement;
+const airwriteStateEl = document.getElementById("airwrite-state") as HTMLSpanElement;
+const airwriteClearBtn = document.getElementById("airwrite-clear-btn") as HTMLButtonElement;
+const airWriter = new AirWriter(airwriteInkCanvas, airwriteCursorCanvas);
+let wasOnAirwritePanel = false;
+
+airwriteClearBtn.addEventListener("click", () => {
+  airWriter.clear();
+});
 
 const handSignals = new HandSignals();
 
@@ -276,17 +288,23 @@ function detectTick() {
     trackingStatusEl.classList.remove("is-error");
     trackingStatusEl.classList.add("is-ready");
 
-    const rawLm = result.landmarks[0].map((p: NormalizedLandmark) => [p.x, p.y, p.z]);
-    const lm = landmarkSmoother.smooth(rawLm, now);
+      const rawLm = result.landmarks[0].map((p: NormalizedLandmark) => [p.x, p.y, p.z]);
+      const lm = landmarkSmoother.smooth(rawLm, now);
       const gesture = handSignals.classify(lm);
       const held = handSignals.isHeld(gesture);
+      const focusedPanelId = panelManager.getFocusedPanelId();
+      const onAirwritePanel = focusedPanelId === "airwrite";
 
       lastHandX = handSignals.getNormalizedPalmX(lm);
 
       applyDiscreteGesture(gesture);
       applyHeldGesture(gesture, now);
 
-      const isCasting = gesture === HandGesture.POINT_UP && held;
+      // The Air Writing panel is dedicated: while it's focused, no other
+      // gesture system (glyph casting, panel grab/throw) gets to act, so it
+      // behaves like its own isolated surface instead of fighting for the
+      // same pinch/point motions.
+      const isCasting = !onAirwritePanel && gesture === HandGesture.POINT_UP && held;
       if (isCasting && !wasCasting) {
         glyphCaster.startCapture();
         soundEngine.startCastingDrone();
@@ -322,26 +340,48 @@ function detectTick() {
 
       const pinchStrength = computePinchStrength(lm);
       const { justStarted, justEnded } = pinchDetector.update(pinchStrength);
-      const screenPos = computeHandScreenPos(lm);
-      const dragPoint = screenToWorldOnPlane(screenPos.x, screenPos.y, panelManager.camera.position.z - 500);
 
-      if (justStarted) {
-        panelManager.beginGrab();
-        soundEngine.playLockOn();
-        grabHistory.length = 0;
+      if (onAirwritePanel) {
+        const pen = computePinchMidpointScreenPos(lm);
+        airWriter.updateCursor(pen.x, pen.y);
+        if (justStarted) {
+          airWriter.penDown(pen.x, pen.y);
+          airwriteStateEl.textContent = "Pen: down";
+        } else if (pinchDetector.pinching) {
+          airWriter.penMove(pen.x, pen.y);
+        } else if (justEnded) {
+          airWriter.penUp();
+          airwriteStateEl.textContent = "Pen: up";
+        }
+      } else {
+        const screenPos = computeHandScreenPos(lm);
+        const dragPoint = screenToWorldOnPlane(screenPos.x, screenPos.y, panelManager.camera.position.z - 500);
+
+        if (justStarted) {
+          panelManager.beginGrab();
+          soundEngine.playLockOn();
+          grabHistory.length = 0;
+        }
+        if (pinchDetector.pinching) {
+          panelManager.updateGrabPosition(dragPoint);
+          grabHistory.push({ pos: dragPoint.clone(), t: now });
+          if (grabHistory.length > 6) grabHistory.shift();
+        }
+        if (justEnded && grabHistory.length >= 2) {
+          const first = grabHistory[0];
+          const last = grabHistory[grabHistory.length - 1];
+          const dt = Math.max((last.t - first.t) / 1000, 1 / 60);
+          const vel = last.pos.clone().sub(first.pos).divideScalar(dt).multiplyScalar(THROW_FORCE / 1000);
+          panelManager.releaseGrab({ x: vel.x, y: vel.y, z: vel.z });
+        }
       }
-      if (pinchDetector.pinching) {
-        panelManager.updateGrabPosition(dragPoint);
-        grabHistory.push({ pos: dragPoint.clone(), t: now });
-        if (grabHistory.length > 6) grabHistory.shift();
+
+      if (wasOnAirwritePanel && !onAirwritePanel) {
+        airWriter.penUp();
+        airWriter.updateCursor(null, null);
+        airwriteStateEl.textContent = "Pen: up";
       }
-      if (justEnded && grabHistory.length >= 2) {
-        const first = grabHistory[0];
-        const last = grabHistory[grabHistory.length - 1];
-        const dt = Math.max((last.t - first.t) / 1000, 1 / 60);
-        const vel = last.pos.clone().sub(first.pos).divideScalar(dt).multiplyScalar(THROW_FORCE / 1000);
-        panelManager.releaseGrab({ x: vel.x, y: vel.y, z: vel.z });
-      }
+      wasOnAirwritePanel = onAirwritePanel;
 
       const openness = gesture === HandGesture.OPEN_PALM ? 1 : gesture === HandGesture.FIST ? 0 : 0.5;
       flowerScene.setOpenness(openness);
@@ -361,6 +401,11 @@ function detectTick() {
     trackingStatusEl.textContent = "Hand: not detected";
     trackingStatusEl.classList.remove("is-ready");
     trackingStatusEl.classList.add("is-error");
+    if (wasOnAirwritePanel) {
+      airWriter.penUp();
+      airWriter.updateCursor(null, null);
+      airwriteStateEl.textContent = "Pen: up";
+    }
   }
 }
 

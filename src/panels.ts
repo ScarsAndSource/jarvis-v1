@@ -65,6 +65,10 @@ export class PanelManager {
     return this.focusIndex;
   }
 
+  getFocusedPanelId(): string | null {
+    return this.panels[this.focusIndex]?.id ?? null;
+  }
+
   count(): number {
     return this.panels.length;
   }

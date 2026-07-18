@@ -148,6 +148,15 @@ export function computePalmCenter(landmarks: number[][]): { x: number; y: number
   return { x: 1 - (landmarks[0][0] + landmarks[9][0]) / 2, y: (landmarks[0][1] + landmarks[9][1]) / 2 };
 }
 
+/** Midpoint between thumb tip and index tip — the natural "pen nib" position
+ * when pinching, rather than the raw fingertip which sits slightly off it. */
+export function computePinchMidpointScreenPos(landmarks: number[][]): { x: number; y: number } {
+  return {
+    x: 1 - (landmarks[4][0] + landmarks[8][0]) / 2,
+    y: (landmarks[4][1] + landmarks[8][1]) / 2,
+  };
+}
+
 export class PinchDetector {
   pinching = false;
 

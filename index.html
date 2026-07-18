@@ -46,6 +46,21 @@
         </div>
       </section>
 
+      <section class="holo-panel" data-panel-id="airwrite" id="panel-airwrite">
+        <div class="holo-panel-inner">
+          <h2>Air Writing</h2>
+          <div class="airwrite-canvas-wrap">
+            <canvas id="airwrite-ink-canvas" class="airwrite-canvas"></canvas>
+            <canvas id="airwrite-cursor-canvas" class="airwrite-canvas"></canvas>
+          </div>
+          <div class="airwrite-controls">
+            <span id="airwrite-state">Pen: up</span>
+            <button id="airwrite-clear-btn" type="button">Clear</button>
+          </div>
+          <p class="hint">This panel is dedicated — pinch thumb + index to bring the pen down and move to write, release to lift the pen. No other gestures act on this panel while it's focused.</p>
+        </div>
+      </section>
+
       <section class="holo-panel" data-panel-id="controls" id="panel-controls">
         <div class="holo-panel-inner">
           <h2>Gesture Controls</h2>
@@ -57,6 +72,7 @@
             <li><strong>Peace sign</strong> — previous panel</li>
             <li><strong>Point up finger, hold — draw a glyph</strong></li>
             <li><strong>🤟 hold</strong> — zoom out</li>
+            <li><strong>Air Writing panel</strong> — pinch to write, dedicated to itself only</li>
             <li><strong>Reset button</strong> — snap everything back</li>
           </ul>
         </div>
