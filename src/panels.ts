@@ -13,6 +13,8 @@ export interface PanelHandle {
   mode: PanelMode;
   dockAngle: number;
   body: RAPIER.RigidBody | null;
+  thrownAt: number;
+  restSince: number | null;
 }
 
 const MIN_SCALE = 0.85;
@@ -20,6 +22,8 @@ const MAX_SCALE = 2.2;
 const RING_RADIUS = 900;
 const ROTATE_LERP = 0.12;
 const BODY_HALF_DEPTH = 14;
+const SETTLE_SPEED = 8; // units/sec below which a thrown panel counts as "at rest"
+const SETTLE_HOLD_MS = 700; // how long it must stay at rest before auto-redocking
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -51,7 +55,7 @@ export class PanelManager {
       object.position.set(Math.sin(angle) * RING_RADIUS, 0, Math.cos(angle) * RING_RADIUS);
       object.rotation.y = angle;
       this.carousel.add(object);
-      return { id: el.dataset.panelId ?? el.id, el, object, scale: 1, mode: "docked" as PanelMode, dockAngle: angle, body: null };
+      return { id: el.dataset.panelId ?? el.id, el, object, scale: 1, mode: "docked" as PanelMode, dockAngle: angle, body: null, thrownAt: 0, restSince: null };
     });
 
     this.applyFocusState();
@@ -97,8 +101,8 @@ export class PanelManager {
   }
 
   resetAll() {
+    this.redockAll();
     for (const p of this.panels) {
-      if (p.mode !== "docked") continue;
       p.scale = 1;
       p.object.scale.setScalar(1);
     }
@@ -147,18 +151,64 @@ export class PanelManager {
     const p = this.panels.find((x) => x.mode === "grabbed");
     if (!p || !this.physics) return;
     p.mode = "thrown";
+    p.thrownAt = performance.now();
     this.physics.makeDynamic(p.body!, velocity);
+  }
+
+  /**
+   * Returns a single panel to its dock slot in the carousel: reparents it,
+   * snaps its physics body back to kinematic (so gravity stops affecting it),
+   * and resets scale/mode. This is the only way a "thrown" panel ever comes
+   * back — without it a panel that gets released stays on the physics floor
+   * forever and can never be grabbed, scaled, or focused again.
+   */
+  private redock(p: PanelHandle) {
+    if (p.mode === "docked") return;
+    this.scene.remove(p.object);
+    this.carousel.add(p.object);
+
+    const angle = p.dockAngle;
+    p.object.position.set(Math.sin(angle) * RING_RADIUS, 0, Math.cos(angle) * RING_RADIUS);
+    p.object.rotation.set(0, angle, 0);
+    p.scale = 1;
+    p.object.scale.setScalar(1);
+
+    if (p.body) {
+      p.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+      p.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      p.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      p.body.setNextKinematicTranslation(p.object.position);
+    }
+
+    p.mode = "docked";
+    p.thrownAt = 0;
+    p.restSince = null;
+  }
+
+  /** Force every panel back to its dock slot, regardless of current mode. */
+  redockAll() {
+    for (const p of this.panels) this.redock(p);
   }
 
   tick() {
     this.carousel.rotation.y += (this.targetRotationY - this.carousel.rotation.y) * ROTATE_LERP;
 
+    const now = performance.now();
     for (const p of this.panels) {
       if (p.mode !== "thrown" || !p.body) continue;
       const t = p.body.translation();
       const r = p.body.rotation();
       p.object.position.set(t.x, t.y, t.z);
       p.object.quaternion.set(r.x, r.y, r.z, r.w);
+
+      const v = p.body.linvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed < SETTLE_SPEED) {
+        if (p.restSince === null) p.restSince = now;
+        else if (now - p.restSince > SETTLE_HOLD_MS) this.redock(p);
+      } else {
+        p.restSince = null;
+      }
     }
 
     this.renderer.render(this.scene, this.camera);
