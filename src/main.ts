@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { HandLandmarker, FilesetResolver, DrawingUtils, NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, computeIndexTipScreenPos, computePalmCenter, computePinchMidpointScreenPos, PinchDetector } from "./handSignals";
+import { HandSignals, HandGesture, computeHandScreenPos, computePinchStrength, computeIndexTipScreenPos, computePalmCenter, computePinchMidpointScreenPos, computeHandOpenness, PinchDetector } from "./handSignals";
 import { VideoController } from "./videoController";
 import { FlowerScene } from "./flower";
 import { AirWriter } from "./airWriter";
@@ -41,8 +41,42 @@ let lastFrameTime = performance.now();
 
 const physics = new PhysicsWorld();
 const pinchDetector = new PinchDetector();
-const THROW_FORCE = 5200;
+// THROW_FORCE was 5200, which — combined with velocity being extrapolated
+// from only a handful of recent grab-history samples over a very short dt —
+// turned even a small, unintentional hand wobble at release into an
+// enormous launch velocity. A gentle release should set the panel down,
+// not catapult it off the ring ("the tile just breaks off and falls off").
+const THROW_FORCE = 900;
+// Below this speed, treat the release as "just letting go" rather than a
+// deliberate throw, and redock in place instead of handing it to physics.
+const MIN_THROW_SPEED = 60;
+// Hard ceiling so even a genuinely fast flick can't send the panel
+// screaming across the physics floor and bouncing forever.
+const MAX_THROW_SPEED = 1400;
 const grabHistory: { pos: THREE.Vector3; t: number }[] = [];
+
+/**
+ * Hand positions from handSignals (computeHandScreenPos, computePinchMidpointScreenPos,
+ * etc.) are normalized 0..1 across the *entire holo-stage* — that's the basis
+ * screenToWorldOnPlane below assumes too, since panelManager's 3D renderer is
+ * sized to exactly fill holoStage. The Air Writing canvas, however, is only a
+ * sub-region of that stage (it sits inside one panel, at ~560x220 CSS px
+ * inside a ~620x460 stage). Mapping the 0..1 stage-normalized position
+ * directly onto the canvas's own width/height (as this used to do) silently
+ * assumed the canvas *was* the whole stage, so drawing required unnaturally
+ * large hand travel and drifted away from where the pen actually appeared —
+ * "the air pencil isn't working". This projects through the real on-screen
+ * bounding rectangles instead, so the ink lands exactly under your fingertip.
+ */
+function stageNormToCanvasNorm(nx: number, ny: number, canvas: HTMLElement): { x: number; y: number } {
+  const stageRect = holoStage.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  const pageX = stageRect.left + nx * stageRect.width;
+  const pageY = stageRect.top + ny * stageRect.height;
+  const localX = canvasRect.width > 0 ? (pageX - canvasRect.left) / canvasRect.width : 0.5;
+  const localY = canvasRect.height > 0 ? (pageY - canvasRect.top) / canvasRect.height : 0.5;
+  return { x: Math.max(0, Math.min(1, localX)), y: Math.max(0, Math.min(1, localY)) };
+}
 
 function screenToWorldOnPlane(nx: number, ny: number, planeZ: number): THREE.Vector3 {
   const cam = panelManager.camera;
@@ -342,7 +376,8 @@ function detectTick() {
       const { justStarted, justEnded } = pinchDetector.update(pinchStrength);
 
       if (onAirwritePanel) {
-        const pen = computePinchMidpointScreenPos(lm);
+        const rawPen = computePinchMidpointScreenPos(lm);
+        const pen = stageNormToCanvasNorm(rawPen.x, rawPen.y, airwriteInkCanvas);
         airWriter.updateCursor(pen.x, pen.y);
         if (justStarted) {
           airWriter.penDown(pen.x, pen.y);
@@ -367,11 +402,22 @@ function detectTick() {
           grabHistory.push({ pos: dragPoint.clone(), t: now });
           if (grabHistory.length > 6) grabHistory.shift();
         }
-        if (justEnded && grabHistory.length >= 2) {
-          const first = grabHistory[0];
-          const last = grabHistory[grabHistory.length - 1];
-          const dt = Math.max((last.t - first.t) / 1000, 1 / 60);
-          const vel = last.pos.clone().sub(first.pos).divideScalar(dt).multiplyScalar(THROW_FORCE / 1000);
+        if (justEnded) {
+          let vel = new THREE.Vector3(0, 0, 0);
+          if (grabHistory.length >= 2) {
+            const first = grabHistory[0];
+            const last = grabHistory[grabHistory.length - 1];
+            const dt = Math.max((last.t - first.t) / 1000, 1 / 60);
+            vel = last.pos.clone().sub(first.pos).divideScalar(dt).multiplyScalar(THROW_FORCE / 1000);
+          }
+          // A quick tap or barely-moving release (or one too brief to have
+          // collected 2+ samples) isn't a "throw" — just set the panel down
+          // where it is instead of launching it.
+          if (vel.length() < MIN_THROW_SPEED) {
+            vel.set(0, 0, 0);
+          } else {
+            vel.clampLength(0, MAX_THROW_SPEED);
+          }
           panelManager.releaseGrab({ x: vel.x, y: vel.y, z: vel.z });
         }
       }
@@ -383,7 +429,7 @@ function detectTick() {
       }
       wasOnAirwritePanel = onAirwritePanel;
 
-      const openness = gesture === HandGesture.OPEN_PALM ? 1 : gesture === HandGesture.FIST ? 0 : 0.5;
+      const openness = computeHandOpenness(lm);
       flowerScene.setOpenness(openness);
       flowerStageEl.textContent = `Stage: ${flowerScene.getStageLabel()}`;
   } else {

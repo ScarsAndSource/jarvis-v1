@@ -49,7 +49,14 @@ export class VideoController {
   }
 
   scrub(normX: number) {
-    if (this.state === "play" || this.state === "pause") return;
+    // Previously this also bailed while state === "pause", which meant that
+    // after the very first open-palm/fist gesture, hand movement could
+    // never scrub again — "pause" is a terminal state with no gesture that
+    // ever brings it back to "scrub". Only actively-playing video should
+    // ignore hand position (so the video doesn't fight your resting hand
+    // while it plays); once paused, moving your hand should always be able
+    // to seek again, exactly as the on-screen hint promises.
+    if (this.state === "play") return;
     this.state = "scrub";
     this.stateEl.textContent = "State: scrub";
     if (this.video.duration && isFinite(this.video.duration)) {

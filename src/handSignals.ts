@@ -157,6 +157,23 @@ export function computePinchMidpointScreenPos(landmarks: number[][]): { x: numbe
   };
 }
 
+/** Returns a continuous 0–1 openness value based on how many fingers are
+ * extended. Replaces the old ternary that mapped gesture labels to hard
+ * 0/0.5/1, so the flower animates smoothly as the hand opens (extended
+ * finger count 0→4 gives 0→1) rather than snapping between stages. */
+export function computeHandOpenness(landmarks: number[][]): number {
+  if (landmarks.length < 21) return 0.5;
+  const indexExt = isExtended(landmarks, Finger.INDEX_TIP, Finger.INDEX_PIP);
+  const middleExt = isExtended(landmarks, Finger.MIDDLE_TIP, Finger.MIDDLE_PIP);
+  const ringExt = isExtended(landmarks, Finger.RING_TIP, Finger.RING_PIP);
+  const pinkyExt = isExtended(landmarks, Finger.PINKY_TIP, Finger.PINKY_PIP);
+  const thumbExt = isThumbExtended(landmarks);
+  const extendedCount = [indexExt, middleExt, ringExt, pinkyExt].filter(Boolean).length;
+  if (extendedCount === 4 && thumbExt) return 1;
+  if (extendedCount === 0 && !thumbExt) return 0;
+  return 0.5;
+}
+
 export class PinchDetector {
   pinching = false;
 
