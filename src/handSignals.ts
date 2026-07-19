@@ -115,7 +115,7 @@ export class HandSignals {
     if (landmarks.length < 21) return 0.5;
     const wrist = landmarks[Finger.WRIST];
     const indexMCP = landmarks[Finger.INDEX_MCP];
-    return (wrist[0] + indexMCP[0]) / 2;
+    return 1 - (wrist[0] + indexMCP[0]) / 2;
   }
 
   isHandVisible(landmarks: number[][] | null): boolean {
@@ -167,11 +167,8 @@ export function computeHandOpenness(landmarks: number[][]): number {
   const middleExt = isExtended(landmarks, Finger.MIDDLE_TIP, Finger.MIDDLE_PIP);
   const ringExt = isExtended(landmarks, Finger.RING_TIP, Finger.RING_PIP);
   const pinkyExt = isExtended(landmarks, Finger.PINKY_TIP, Finger.PINKY_PIP);
-  const thumbExt = isThumbExtended(landmarks);
   const extendedCount = [indexExt, middleExt, ringExt, pinkyExt].filter(Boolean).length;
-  if (extendedCount === 4 && thumbExt) return 1;
-  if (extendedCount === 0 && !thumbExt) return 0;
-  return 0.5;
+  return extendedCount / 4;
 }
 
 export class PinchDetector {

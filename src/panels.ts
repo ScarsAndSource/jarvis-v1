@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CSS3DRenderer, CSS3DObject } from "three/examples/jsm/renderers/CSS3DRenderer.js";
-import RAPIER from "@dimforge/rapier3d-compat";
+import type { RigidBody } from "@dimforge/rapier3d-compat";
 import type { PhysicsWorld } from "./physics";
 
 export type PanelMode = "docked" | "grabbed" | "thrown";
@@ -12,7 +12,7 @@ export interface PanelHandle {
   scale: number;
   mode: PanelMode;
   dockAngle: number;
-  body: RAPIER.RigidBody | null;
+  body: RigidBody | null;
   thrownAt: number;
   restSince: number | null;
 }
@@ -22,8 +22,9 @@ const MAX_SCALE = 2.2;
 const RING_RADIUS = 900;
 const ROTATE_LERP = 0.12;
 const BODY_HALF_DEPTH = 14;
-const SETTLE_SPEED = 8; // units/sec below which a thrown panel counts as "at rest"
-const SETTLE_HOLD_MS = 700; // how long it must stay at rest before auto-redocking
+const SETTLE_SPEED = 8;
+const SETTLE_HOLD_MS = 700;
+const GRAB_IDLE_TIMEOUT_MS = 600;
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -37,6 +38,7 @@ export class PanelManager {
   private focusIndex = 0;
   private targetRotationY = 0;
   private physics: PhysicsWorld | null = null;
+  private lastGrabUpdateAt = 0;
 
   constructor(mount: HTMLElement, panelEls: HTMLElement[], width: number, height: number) {
     this.renderer.setSize(width, height);
@@ -74,14 +76,14 @@ export class PanelManager {
   }
 
   focusNext() {
-    if (this.focusIndex >= this.panels.length - 1) return;
-    this.focusIndex++;
+    if (this.panels.length === 0) return;
+    this.focusIndex = (this.focusIndex + 1) % this.panels.length;
     this.applyFocusState();
   }
 
   focusPrev() {
-    if (this.focusIndex <= 0) return;
-    this.focusIndex--;
+    if (this.panels.length === 0) return;
+    this.focusIndex = (this.focusIndex - 1 + this.panels.length) % this.panels.length;
     this.applyFocusState();
   }
 
@@ -140,7 +142,8 @@ export class PanelManager {
     this.scene.add(p.object);
 
     p.mode = "grabbed";
-    p.body!.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    this.physics.setKinematicKeepVelocity(p.body!);
+    this.lastGrabUpdateAt = performance.now();
     return p;
   }
 
@@ -149,6 +152,7 @@ export class PanelManager {
     if (!p) return;
     p.object.position.lerp(target, 0.35);
     p.body!.setNextKinematicTranslation(p.object.position);
+    this.lastGrabUpdateAt = performance.now();
   }
 
   releaseGrab(velocity: { x: number; y: number; z: number }) {
@@ -159,13 +163,6 @@ export class PanelManager {
     this.physics.makeDynamic(p.body!, velocity);
   }
 
-  /**
-   * Returns a single panel to its dock slot in the carousel: reparents it,
-   * snaps its physics body back to kinematic (so gravity stops affecting it),
-   * and resets scale/mode. This is the only way a "thrown" panel ever comes
-   * back — without it a panel that gets released stays on the physics floor
-   * forever and can never be grabbed, scaled, or focused again.
-   */
   private redock(p: PanelHandle) {
     if (p.mode === "docked") return;
     this.scene.remove(p.object);
@@ -177,10 +174,8 @@ export class PanelManager {
     p.scale = 1;
     p.object.scale.setScalar(1);
 
-    if (p.body) {
-      p.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
-      p.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      p.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    if (p.body && this.physics) {
+      this.physics.setKinematic(p.body);
       p.body.setNextKinematicTranslation(p.object.position);
     }
 
@@ -189,7 +184,6 @@ export class PanelManager {
     p.restSince = null;
   }
 
-  /** Force every panel back to its dock slot, regardless of current mode. */
   redockAll() {
     for (const p of this.panels) this.redock(p);
   }
@@ -198,6 +192,12 @@ export class PanelManager {
     this.carousel.rotation.y += (this.targetRotationY - this.carousel.rotation.y) * ROTATE_LERP;
 
     const now = performance.now();
+
+    const grabbed = this.panels.find((p) => p.mode === "grabbed");
+    if (grabbed && now - this.lastGrabUpdateAt > GRAB_IDLE_TIMEOUT_MS) {
+      this.redock(grabbed);
+    }
+
     for (const p of this.panels) {
       if (p.mode !== "thrown" || !p.body) continue;
       const t = p.body.translation();

@@ -118,6 +118,10 @@ export class DollarRecognizer {
     return this.templates.some((t) => t.name === name);
   }
 
+  hasAnyTemplate(): boolean {
+    return this.templates.length > 0;
+  }
+
   serialize(): string {
     return JSON.stringify(this.templates);
   }

@@ -8,6 +8,7 @@ const MATCH_THRESHOLD = 0.65;
 export type CastResult =
   | { kind: "matched"; name: GlyphName; score: number; turns?: number }
   | { kind: "fizzle" }
+  | { kind: "untrained" }
   | { kind: "attuned"; name: GlyphName };
 
 function computeTurns(raw: Pt[]): number {
@@ -75,6 +76,7 @@ export class GlyphCaster {
       return { kind: "attuned", name };
     }
 
+    if (!this.recognizer.hasAnyTemplate()) return { kind: "untrained" };
     const result = this.recognizer.recognize(this.trail);
     if (!result || result.score < MATCH_THRESHOLD) return { kind: "fizzle" };
     const name = result.name as GlyphName;
