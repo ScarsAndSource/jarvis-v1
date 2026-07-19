@@ -92,6 +92,18 @@ export class AirWriter {
     this.cursorCtx.restore();
   }
 
+  resize() {
+    const dpr = window.devicePixelRatio || 1;
+    this.cssWidth = this.inkCanvas.clientWidth;
+    this.cssHeight = this.inkCanvas.clientHeight;
+    for (const c of [this.inkCanvas, this.cursorCanvas]) {
+      c.width = this.cssWidth * dpr;
+      c.height = this.cssHeight * dpr;
+    }
+    this.inkCtx.scale(dpr, dpr);
+    this.cursorCtx.scale(dpr, dpr);
+  }
+
   clear() {
     this.inkCtx.clearRect(0, 0, this.cssWidth, this.cssHeight);
   }

@@ -439,3 +439,27 @@ canvas#flower-canvas {
 #attune-btn:hover {
   background: rgba(167, 139, 250, 0.28);
 }
+
+.sound-hint {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
+  background: rgba(20, 16, 28, 0.85);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  color: #f0e6d2;
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+
+.sound-hint.is-hidden {
+  opacity: 0;
+}

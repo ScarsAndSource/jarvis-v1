@@ -29,6 +29,12 @@ export class FlowerScene {
     return "Full Bloom";
   }
 
+  resize() {
+    this.canvas.width = this.canvas.clientWidth * devicePixelRatio;
+    this.canvas.height = this.canvas.clientHeight * devicePixelRatio;
+    this.ctx.scale(devicePixelRatio, devicePixelRatio);
+  }
+
   destroy() {
     cancelAnimationFrame(this.animId);
   }

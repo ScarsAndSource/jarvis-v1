@@ -32,6 +32,8 @@ const panelManager = new PanelManager(
 
 window.addEventListener("resize", () => {
   panelManager.resize(holoStage.clientWidth, holoStage.clientHeight);
+  flowerScene.resize();
+  airWriter.resize();
 });
 
 const rings = new AstrolabeRings();
@@ -41,33 +43,11 @@ let lastFrameTime = performance.now();
 
 const physics = new PhysicsWorld();
 const pinchDetector = new PinchDetector();
-// THROW_FORCE was 5200, which — combined with velocity being extrapolated
-// from only a handful of recent grab-history samples over a very short dt —
-// turned even a small, unintentional hand wobble at release into an
-// enormous launch velocity. A gentle release should set the panel down,
-// not catapult it off the ring ("the tile just breaks off and falls off").
 const THROW_FORCE = 900;
-// Below this speed, treat the release as "just letting go" rather than a
-// deliberate throw, and redock in place instead of handing it to physics.
 const MIN_THROW_SPEED = 60;
-// Hard ceiling so even a genuinely fast flick can't send the panel
-// screaming across the physics floor and bouncing forever.
 const MAX_THROW_SPEED = 1400;
 const grabHistory: { pos: THREE.Vector3; t: number }[] = [];
 
-/**
- * Hand positions from handSignals (computeHandScreenPos, computePinchMidpointScreenPos,
- * etc.) are normalized 0..1 across the *entire holo-stage* — that's the basis
- * screenToWorldOnPlane below assumes too, since panelManager's 3D renderer is
- * sized to exactly fill holoStage. The Air Writing canvas, however, is only a
- * sub-region of that stage (it sits inside one panel, at ~560x220 CSS px
- * inside a ~620x460 stage). Mapping the 0..1 stage-normalized position
- * directly onto the canvas's own width/height (as this used to do) silently
- * assumed the canvas *was* the whole stage, so drawing required unnaturally
- * large hand travel and drifted away from where the pen actually appeared —
- * "the air pencil isn't working". This projects through the real on-screen
- * bounding rectangles instead, so the ink lands exactly under your fingertip.
- */
 function stageNormToCanvasNorm(nx: number, ny: number, canvas: HTMLElement): { x: number; y: number } {
   const stageRect = holoStage.getBoundingClientRect();
   const canvasRect = canvas.getBoundingClientRect();
@@ -96,10 +76,8 @@ const overlayCanvas = document.getElementById("tracking-overlay") as HTMLCanvasE
 const overlayCtx = overlayCanvas.getContext("2d") as CanvasRenderingContext2D;
 const drawingUtils = new DrawingUtils(overlayCtx);
 const trackingStatusEl = document.getElementById("tracking-status") as HTMLParagraphElement;
-// beta pulls the filter toward being more responsive during fast motion (less
-// lag) while minCutoff still kills jitter when the hand is still. Raise beta
-// if it still feels laggy, lower it if it feels jittery.
 const landmarkSmoother = new LandmarkSmoother(1.2, 0.6, 1.0);
+const landmarkSmootherSecondary = new LandmarkSmoother(1.2, 0.6, 1.0);
 
 const flowerCanvas = document.getElementById("flower-canvas") as HTMLCanvasElement;
 const flowerStageEl = document.getElementById("flower-stage") as HTMLParagraphElement;
@@ -167,7 +145,14 @@ attuneBtn.addEventListener("click", () => {
 if (glyphCaster.isAttuned()) glyphStatusEl.textContent = "Glyphs: attuned (loaded from last session)";
 
 const soundEngine = new SoundEngine();
-document.addEventListener("pointerdown", () => { void soundEngine.unlock(); }, { once: true });
+const soundHintEl = document.getElementById("sound-hint") as HTMLDivElement | null;
+function enableSoundOnce() {
+  void soundEngine.unlock().then(() => {
+    soundHintEl?.classList.add("is-hidden");
+  });
+}
+document.addEventListener("pointerdown", enableSoundOnce, { once: true });
+document.addEventListener("keydown", enableSoundOnce, { once: true });
 
 const fusionController = new FusionController();
 const SPIRAL_ZOOM_PER_TURN = 0.35;
@@ -180,6 +165,11 @@ function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
     glyphStatusEl.textContent = next
       ? `Attuned "${result.name}" — now draw "${next}"`
       : `Attuned "${result.name}" — sanctum bound, casting is live`;
+    return;
+  }
+  if (result.kind === "untrained") {
+    soundEngine.playFizzle();
+    glyphStatusEl.textContent = 'No glyphs attuned yet — click "Attune Glyphs" to begin';
     return;
   }
   if (result.kind === "fizzle") {
@@ -213,7 +203,6 @@ function handleCastResult(result: ReturnType<GlyphCaster["endCapture"]>) {
 
 let handLandmarker: HandLandmarker;
 let lastHandX = 0.5;
-let rafId = 0;
 
 async function initHandLandmarker() {
   try {
@@ -252,10 +241,6 @@ async function initHandLandmarker() {
   scheduleDetect();
 }
 
-/**
- * Runs every animation frame regardless of hand-detection cost, so the 3D
- * scene stays smooth even if ML inference is slow on a given machine.
- */
 function renderTick() {
   const frameNow = performance.now();
   const dt = Math.min((frameNow - lastFrameTime) / 1000, 0.1);
@@ -266,15 +251,9 @@ function renderTick() {
   embers.update(dt);
   if (physics.isReady()) physics.step();
   panelManager.tick();
-  rafId = requestAnimationFrame(renderTick);
+  requestAnimationFrame(renderTick);
 }
 
-/**
- * Schedules detectTick to run as new camera frames actually arrive, via
- * requestVideoFrameCallback (syncs to real frame delivery, avoids redundant
- * work on frames that haven't changed). Falls back to a ~30fps timer on
- * browsers without rVFC support (older Safari).
- */
 function scheduleDetect() {
   const videoAny = webcamVideo as HTMLVideoElement & {
     requestVideoFrameCallback?: (cb: () => void) => number;
@@ -331,17 +310,6 @@ function detectTick() {
 
       lastHandX = handSignals.getNormalizedPalmX(lm);
 
-      // The Air Writing panel is meant to be a fully isolated surface: no
-      // other gesture system should be able to act while it's focused.
-      // Previously applyDiscreteGesture/applyHeldGesture ran unconditionally
-      // here, every frame, regardless of which panel was focused — so any
-      // hand shape that transiently looked like PEACE/THUMBS_UP while you
-      // were mid-stroke (fingers naturally spreading as you write) instantly
-      // changed focus away from the airwrite panel. Because your hand was
-      // still pinched at that moment, the very next frame reinterpreted the
-      // same ongoing pinch as a panel grab instead of a pen stroke, and
-      // releasing it moments later launched the panel — one bug producing
-      // both "screen changes while I'm writing" and "panels fall off".
       if (onAirwritePanel) {
         resetDiscreteGestureDebounce();
       } else {
@@ -366,9 +334,6 @@ function detectTick() {
       if (!isCasting && wasCasting) {
         soundEngine.stopCastingDrone();
         handleCastResult(glyphCaster.endCapture());
-        // Leave the finished rune on screen briefly so the person can see what
-        // they drew, then fade it — instead of it vanishing the instant the
-        // pose relaxes, which is what made casting feel like it wasn't working.
         glyphFadeTimer = window.setTimeout(() => {
           glyphTrailPoints = [];
           glyphTrailCtx.clearRect(0, 0, glyphTrailCanvas.width, glyphTrailCanvas.height);
@@ -376,13 +341,17 @@ function detectTick() {
       }
       wasCasting = isCasting;
 
-      const secondaryLm = result.landmarks?.[1]?.map((p: NormalizedLandmark) => [p.x, p.y, p.z]) ?? null;
+      const rawSecondaryLm = result.landmarks?.[1]?.map((p: NormalizedLandmark) => [p.x, p.y, p.z]) ?? null;
+      const secondaryLm = rawSecondaryLm ? landmarkSmootherSecondary.smooth(rawSecondaryLm, now) : null;
+      if (!rawSecondaryLm) landmarkSmootherSecondary.reset();
       const primaryPalm = computePalmCenter(lm);
       const secondaryPalm = secondaryLm ? computePalmCenter(secondaryLm) : null;
       const fusionDelta = fusionController.update(primaryPalm, secondaryPalm);
       if (fusionDelta) panelManager.applyFusionTransform(fusionDelta.scaleDelta, fusionDelta.rotationDelta);
 
-      videoCtrl.scrub(lastHandX);
+      if (focusedPanelId === "resume") {
+        videoCtrl.scrub(lastHandX);
+      }
 
       const pinchStrength = computePinchStrength(lm);
       const { justStarted, justEnded } = pinchDetector.update(pinchStrength);
@@ -405,8 +374,8 @@ function detectTick() {
         const dragPoint = screenToWorldOnPlane(screenPos.x, screenPos.y, panelManager.camera.position.z - 500);
 
         if (justStarted) {
-          panelManager.beginGrab();
-          soundEngine.playLockOn();
+          const grabbedPanel = panelManager.beginGrab();
+          if (grabbedPanel) soundEngine.playLockOn();
           grabHistory.length = 0;
         }
         if (pinchDetector.pinching) {
@@ -422,9 +391,6 @@ function detectTick() {
             const dt = Math.max((last.t - first.t) / 1000, 1 / 60);
             vel = last.pos.clone().sub(first.pos).divideScalar(dt).multiplyScalar(THROW_FORCE / 1000);
           }
-          // A quick tap or barely-moving release (or one too brief to have
-          // collected 2+ samples) isn't a "throw" — just set the panel down
-          // where it is instead of launching it.
           if (vel.length() < MIN_THROW_SPEED) {
             vel.set(0, 0, 0);
           } else {
@@ -453,8 +419,14 @@ function detectTick() {
       glyphTrailPoints = [];
       glyphTrailCtx.clearRect(0, 0, glyphTrailCanvas.width, glyphTrailCanvas.height);
     }
+    const pinchRelease = pinchDetector.update(null);
+    if (pinchRelease.justEnded) {
+      panelManager.releaseGrab({ x: 0, y: 0, z: 0 });
+      grabHistory.length = 0;
+    }
     fusionController.update(null, null);
     landmarkSmoother.reset();
+    landmarkSmootherSecondary.reset();
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     trackingStatusEl.textContent = "Hand: not detected";
     trackingStatusEl.classList.remove("is-ready");
@@ -469,11 +441,6 @@ function detectTick() {
 
 let lastDiscreteGesture = HandGesture.NONE;
 
-// Requires a gesture to read the same for DISCRETE_CONFIRM_FRAMES straight
-// frames before it's treated as "confirmed" and handed to
-// applyDiscreteGesture. Without this, classify() only needs to misfire for
-// a single frame — entirely possible during fast hand motion — to instantly
-// trigger a focus change, play, pause, or restart.
 const DISCRETE_CONFIRM_FRAMES = 4;
 let pendingDiscreteGesture = HandGesture.NONE;
 let pendingDiscreteFrames = 0;
