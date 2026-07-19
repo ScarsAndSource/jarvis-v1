@@ -5,7 +5,6 @@ import { VideoController } from "./videoController";
 import { FlowerScene } from "./flower";
 import { AirWriter } from "./airWriter";
 import { PanelManager } from "./panels";
-import { PhysicsWorld } from "./physics";
 import { AstrolabeRings } from "./rings";
 import { EmberField } from "./embers";
 import { GlyphCaster } from "./glyphCaster";
@@ -41,12 +40,7 @@ const embers = new EmberField();
 panelManager.scene.add(rings.group, embers.points);
 let lastFrameTime = performance.now();
 
-const physics = new PhysicsWorld();
 const pinchDetector = new PinchDetector();
-const THROW_FORCE = 900;
-const MIN_THROW_SPEED = 60;
-const MAX_THROW_SPEED = 1400;
-const grabHistory: { pos: THREE.Vector3; t: number }[] = [];
 
 function stageNormToCanvasNorm(nx: number, ny: number, canvas: HTMLElement): { x: number; y: number } {
   const stageRect = holoStage.getBoundingClientRect();
@@ -231,9 +225,6 @@ async function initHandLandmarker() {
     runningMode: "VIDEO",
     numHands: 2,
   });
-  await physics.init();
-  panelManager.attachPhysics(physics);
-
   overlayCanvas.width = webcamVideo.videoWidth || 640;
   overlayCanvas.height = webcamVideo.videoHeight || 480;
 
@@ -249,7 +240,6 @@ function renderTick() {
   embers.setEngaged(pinchDetector.pinching);
   rings.update(dt, frameNow / 1000);
   embers.update(dt);
-  if (physics.isReady()) physics.step();
   panelManager.tick();
   requestAnimationFrame(renderTick);
 }
@@ -376,27 +366,12 @@ function detectTick() {
         if (justStarted) {
           const grabbedPanel = panelManager.beginGrab();
           if (grabbedPanel) soundEngine.playLockOn();
-          grabHistory.length = 0;
         }
         if (pinchDetector.pinching) {
           panelManager.updateGrabPosition(dragPoint);
-          grabHistory.push({ pos: dragPoint.clone(), t: now });
-          if (grabHistory.length > 6) grabHistory.shift();
         }
         if (justEnded) {
-          let vel = new THREE.Vector3(0, 0, 0);
-          if (grabHistory.length >= 2) {
-            const first = grabHistory[0];
-            const last = grabHistory[grabHistory.length - 1];
-            const dt = Math.max((last.t - first.t) / 1000, 1 / 60);
-            vel = last.pos.clone().sub(first.pos).divideScalar(dt).multiplyScalar(THROW_FORCE / 1000);
-          }
-          if (vel.length() < MIN_THROW_SPEED) {
-            vel.set(0, 0, 0);
-          } else {
-            vel.clampLength(0, MAX_THROW_SPEED);
-          }
-          panelManager.releaseGrab({ x: vel.x, y: vel.y, z: vel.z });
+          panelManager.releaseGrab();
         }
       }
 
@@ -421,8 +396,7 @@ function detectTick() {
     }
     const pinchRelease = pinchDetector.update(null);
     if (pinchRelease.justEnded) {
-      panelManager.releaseGrab({ x: 0, y: 0, z: 0 });
-      grabHistory.length = 0;
+      panelManager.releaseGrab();
     }
     fusionController.update(null, null);
     landmarkSmoother.reset();
