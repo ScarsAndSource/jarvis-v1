@@ -1,9 +1,7 @@
 import * as THREE from "three";
 import { CSS3DRenderer, CSS3DObject } from "three/examples/jsm/renderers/CSS3DRenderer.js";
-import type { RigidBody } from "@dimforge/rapier3d-compat";
-import type { PhysicsWorld } from "./physics";
 
-export type PanelMode = "docked" | "grabbed" | "thrown";
+export type PanelMode = "docked" | "grabbed" | "returning";
 
 export interface PanelHandle {
   id: string;
@@ -12,19 +10,19 @@ export interface PanelHandle {
   scale: number;
   mode: PanelMode;
   dockAngle: number;
-  body: RigidBody | null;
-  thrownAt: number;
-  restSince: number | null;
 }
 
 const MIN_SCALE = 0.85;
 const MAX_SCALE = 2.2;
 const RING_RADIUS = 900;
 const ROTATE_LERP = 0.12;
-const BODY_HALF_DEPTH = 14;
-const SETTLE_SPEED = 8;
-const SETTLE_HOLD_MS = 700;
+const RETURN_LERP = 0.06;
+const RETURN_SNAP_DIST = 1;
 const GRAB_IDLE_TIMEOUT_MS = 600;
+
+function dockPosition(angle: number): THREE.Vector3 {
+  return new THREE.Vector3(Math.sin(angle) * RING_RADIUS, 0, Math.cos(angle) * RING_RADIUS);
+}
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -37,7 +35,6 @@ export class PanelManager {
   private panels: PanelHandle[] = [];
   private focusIndex = 0;
   private targetRotationY = 0;
-  private physics: PhysicsWorld | null = null;
   private lastGrabUpdateAt = 0;
 
   constructor(mount: HTMLElement, panelEls: HTMLElement[], width: number, height: number) {
@@ -54,10 +51,10 @@ export class PanelManager {
     this.panels = panelEls.map((el, i) => {
       const object = new CSS3DObject(el);
       const angle = (i / count) * Math.PI * 2;
-      object.position.set(Math.sin(angle) * RING_RADIUS, 0, Math.cos(angle) * RING_RADIUS);
+      object.position.copy(dockPosition(angle));
       object.rotation.y = angle;
       this.carousel.add(object);
-      return { id: el.dataset.panelId ?? el.id, el, object, scale: 1, mode: "docked" as PanelMode, dockAngle: angle, body: null, thrownAt: 0, restSince: null };
+      return { id: el.dataset.panelId ?? el.id, el, object, scale: 1, mode: "docked" as PanelMode, dockAngle: angle };
     });
 
     this.applyFocusState();
@@ -122,19 +119,9 @@ export class PanelManager {
     this.renderer.setSize(width, height);
   }
 
-  attachPhysics(physics: PhysicsWorld) {
-    this.physics = physics;
-    for (const p of this.panels) {
-      const hw = p.el.offsetWidth / 2 || 280;
-      const hh = p.el.offsetHeight / 2 || 190;
-      const { rigidBody } = physics.createPanelBody(hw, hh, BODY_HALF_DEPTH);
-      p.body = rigidBody;
-    }
-  }
-
   beginGrab(): PanelHandle | null {
     const p = this.panels[this.focusIndex];
-    if (!p || p.mode !== "docked" || !this.physics) return null;
+    if (!p || p.mode !== "docked") return null;
 
     p.object.position.applyQuaternion(this.carousel.quaternion);
     p.object.rotation.y += this.carousel.rotation.y;
@@ -142,7 +129,6 @@ export class PanelManager {
     this.scene.add(p.object);
 
     p.mode = "grabbed";
-    this.physics.setKinematicKeepVelocity(p.body!);
     this.lastGrabUpdateAt = performance.now();
     return p;
   }
@@ -151,16 +137,13 @@ export class PanelManager {
     const p = this.panels.find((x) => x.mode === "grabbed");
     if (!p) return;
     p.object.position.lerp(target, 0.35);
-    p.body!.setNextKinematicTranslation(p.object.position);
     this.lastGrabUpdateAt = performance.now();
   }
 
-  releaseGrab(velocity: { x: number; y: number; z: number }) {
+  releaseGrab() {
     const p = this.panels.find((x) => x.mode === "grabbed");
-    if (!p || !this.physics) return;
-    p.mode = "thrown";
-    p.thrownAt = performance.now();
-    this.physics.makeDynamic(p.body!, velocity);
+    if (!p) return;
+    p.mode = "returning";
   }
 
   private redock(p: PanelHandle) {
@@ -169,19 +152,12 @@ export class PanelManager {
     this.carousel.add(p.object);
 
     const angle = p.dockAngle;
-    p.object.position.set(Math.sin(angle) * RING_RADIUS, 0, Math.cos(angle) * RING_RADIUS);
+    p.object.position.copy(dockPosition(angle));
     p.object.rotation.set(0, angle, 0);
     p.scale = 1;
     p.object.scale.setScalar(1);
 
-    if (p.body && this.physics) {
-      this.physics.setKinematic(p.body);
-      p.body.setNextKinematicTranslation(p.object.position);
-    }
-
     p.mode = "docked";
-    p.thrownAt = 0;
-    p.restSince = null;
   }
 
   redockAll() {
@@ -199,19 +175,13 @@ export class PanelManager {
     }
 
     for (const p of this.panels) {
-      if (p.mode !== "thrown" || !p.body) continue;
-      const t = p.body.translation();
-      const r = p.body.rotation();
-      p.object.position.set(t.x, t.y, t.z);
-      p.object.quaternion.set(r.x, r.y, r.z, r.w);
-
-      const v = p.body.linvel();
-      const speed = Math.hypot(v.x, v.y, v.z);
-      if (speed < SETTLE_SPEED) {
-        if (p.restSince === null) p.restSince = now;
-        else if (now - p.restSince > SETTLE_HOLD_MS) this.redock(p);
-      } else {
-        p.restSince = null;
+      if (p.mode !== "returning") continue;
+      const angle = p.dockAngle;
+      const targetPos = dockPosition(angle);
+      p.object.position.lerp(targetPos, RETURN_LERP);
+      p.object.rotation.y += (angle - p.object.rotation.y) * RETURN_LERP;
+      if (p.object.position.distanceTo(targetPos) < RETURN_SNAP_DIST) {
+        this.redock(p);
       }
     }
 
