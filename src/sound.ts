@@ -51,10 +51,6 @@ export class SoundEngine {
     this.started = true;
   }
 
-  isUnlocked(): boolean {
-    return this.started;
-  }
-
   playLockOn() {
     if (!this.started || !this.lockTone) return;
     this.lockTone.triggerAttackRelease("C3", 1.2);
