@@ -123,6 +123,10 @@ export class PanelManager {
     const p = this.panels[this.focusIndex];
     if (!p || p.mode !== "docked") return null;
 
+    this.camera.position.x = 0;
+    this.camera.position.y = 0;
+    this.camera.quaternion.identity();
+
     p.object.position.applyQuaternion(this.carousel.quaternion);
     p.object.rotation.y += this.carousel.rotation.y;
     this.carousel.remove(p.object);
